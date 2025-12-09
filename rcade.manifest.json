@@ -1,0 +1,16 @@
+{
+  "$schema": "https://rcade.dev/manifest.schema.json",
+  "name": "ssf2",
+  "display_name": "Super Smash Flash 2",
+  "description": "fixme",
+  "visibility": "public",
+  "authors": {
+    "display_name": "fixme"
+  },
+  "dependencies": [
+    {
+      "name": "@rcade/input-classic",
+      "version": "1.0.0"
+    }
+  ]
+}
