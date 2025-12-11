@@ -1,7 +1,11 @@
 import * as inputs from "@rcade/plugin-input-classic";
 
-// Global reference to the player so we can focus it later
+// Global reference to the player
 let ruffleInstance = null;
+// Track currently held system keys for the combo
+const HELD_SYSTEM_KEYS = new Set();
+let isPauseActive = false;
+let isStartActive = false;
 
 window.RufflePlayer = window.RufflePlayer || {};
 window.RufflePlayer.config = {
@@ -10,7 +14,7 @@ window.RufflePlayer.config = {
     maxExecutionDuration: 100,
 };
 
-// --- KEY MAP (Your exact requested format) ---
+// --- KEY MAP ---
 const MAP = {
     // WASD + P, O, U
     "system-ONE_PLAYER": ["KeyU", "u", 85],
@@ -33,49 +37,94 @@ const MAP = {
 
 // --- INJECTION LOGIC ---
 function injectEvent(type, code, key, keyCode) {
-    // 1. Find the target (The Ruffle Player)
     const target = ruffleInstance || document.querySelector('ruffle-player') || document.body;
 
-    // 2. FORCE FOCUS: Flash ignores inputs if not focused
     if (document.activeElement !== target) {
-        target.focus(); 
+        target.focus();
     }
 
-    // 3. AUTO-CALCULATE LOCATION
-    // If the code contains "Numpad", we MUST send location 3, or Flash ignores it.
+    // Auto-calculate location (3 for Numpad, 0 for everything else)
     const location = code.includes("Numpad") ? 3 : 0;
 
-    console.log(`Injecting ${type} -> ${code} (Key: ${keyCode}, Loc: ${location})`);
+    // console.log(`Injecting ${type} -> ${code} (Key: ${keyCode}, Loc: ${location})`);
 
     const event = new KeyboardEvent(type, {
         key: key,
         code: code,
-        keyCode: keyCode, 
+        keyCode: keyCode,
         which: keyCode,
-        location: location, // Automatically applied based on code name
+        location: location,
         bubbles: true,
         cancelable: true,
-        composed: true,     // crucial for shadow DOM (which Ruffle uses)
+        composed: true,
         view: window
     });
 
     target.dispatchEvent(event);
 }
 
+// --- INPUT HANDLERS ---
 inputs.on("inputStart", input => {
-    const mapKey = input.type == "system" 
-        ? `system-${input.button}` 
+    const mapKey = input.type == "system"
+        ? `system-${input.button}`
         : `button-${input.player}-${input.button}`;
-    
+
+    // 1. CHECK FOR COMBO (Start Logic)
+    if (["system-ONE_PLAYER", "system-TWO_PLAYER", "button-1-A", "button-1-B", "button-2-A", "button-2-B"].includes(mapKey)) {
+        HELD_SYSTEM_KEYS.add(mapKey);
+
+        // If both keys are in the Set, Trigger Backspace!
+        if (HELD_SYSTEM_KEYS.has("system-ONE_PLAYER") && HELD_SYSTEM_KEYS.has("system-TWO_PLAYER")) {
+            if (!isStartActive) {
+                console.log("Combo Activated: Simulating Space");
+                injectEvent('keydown', "Space", " ", 32);
+                isStartActive = true;
+            }
+        }
+
+        if ((HELD_SYSTEM_KEYS.has("button-1-A") && HELD_SYSTEM_KEYS.has("button-1-B")) || (HELD_SYSTEM_KEYS.has("button-2-A") && HELD_SYSTEM_KEYS.has("button-2-B"))) {
+            if (!isPauseActive) {
+                console.log("Combo Activated: Simulating Backspace");
+                injectEvent('keydown', "Backspace", "Backspace", 8);
+                isPauseActive = true;
+            }
+        }
+    }
+
+    // 2. Standard Injection
     const [code, key, keyCode] = MAP[mapKey] || [];
     if (code) injectEvent('keydown', code, key, keyCode);
 })
 
 inputs.on("inputEnd", input => {
-    const mapKey = input.type == "system" 
-        ? `system-${input.button}` 
+    const mapKey = input.type == "system"
+        ? `system-${input.button}`
         : `button-${input.player}-${input.button}`;
 
+    // 1. CHECK FOR START (End Logic)
+    if ("system-ONE_PLAYER" === mapKey || "system-TWO_PLAYER" === mapKey) {
+        HELD_SYSTEM_KEYS.delete(mapKey);
+
+        // If the combo was active, release Backspace
+        if (isStartActive) {
+            console.log("Combo Deactivated: Releasing Space");
+            injectEvent('keyup', "Space", " ", 32);
+            isStartActive = false;
+        }
+    }
+
+    if (["button-1-A", "button-1-B"].includes(mapKey) || ["button-2-A", "button-2-B"].includes(mapKey)) {
+        HELD_SYSTEM_KEYS.delete(mapKey);
+
+        // If the combo was active, release Backspace
+        if (isPauseActive) {
+            console.log("Combo Deactivated: Releasing Backspace");
+            injectEvent('keyup', "Backspace", "Backspace", 8);
+            isPauseActive = false;
+        }
+    }
+
+    // 2. Standard Injection
     const [code, key, keyCode] = MAP[mapKey] || [];
     if (code) injectEvent('keyup', code, key, keyCode);
 })
@@ -86,24 +135,21 @@ async function loadSWF() {
     try {
         const ruffle = window.RufflePlayer.newest();
         const player = ruffle.createPlayer();
-        
-        // Save global reference for the injector
-        ruffleInstance = player; 
+
+        ruffleInstance = player;
 
         player.id = "ruffle_target";
         player.style.width = "336px";
         player.style.height = "262px";
-        
-        // Make sure it can accept focus
-        player.tabIndex = 0; 
+        player.tabIndex = 0;
 
         container.appendChild(player);
         await player.load('/SSF2Portable.swf');
-        
-        console.log("SWF Loaded. Clicking player to ensure focus...");
+
+        // Ensure focus
         player.focus();
-        player.click(); // sometimes needed to "wake up" the audio context/input
-        
+        player.click();
+
     } catch (error) {
         console.error('Error loading SWF:', error);
     }
